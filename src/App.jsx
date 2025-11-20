@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Search, Play, Settings, X, Loader2, Youtube, AlertCircle, User, Calendar, Eye, FileText, ChevronLeft, Download } from 'lucide-react';
 
 export default function App() {
-  // --- 상태 관리 ---
   const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [query, setQuery] = useState('');
@@ -16,26 +15,26 @@ export default function App() {
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
 
+  // [배포앱] 초기 로드 시 저장된 키 불러오기
   useEffect(() => {
     const storedKey = localStorage.getItem('yt_api_key');
     if (storedKey) setApiKey(storedKey);
     else setShowSettings(true);
   }, []);
 
+  // [배포앱] 키 저장 함수
   const saveApiKey = () => {
     localStorage.setItem('yt_api_key', apiKey);
     setShowSettings(false);
     setError(null);
   };
 
-  // HTML 디코딩
   const decodeHtml = (html) => {
     const txt = document.createElement("textarea");
     txt.innerHTML = html;
     return txt.value;
   };
 
-  // 숫자 포맷
   const formatCount = (count) => {
     if (!count) return '0';
     const num = parseInt(count, 10);
@@ -44,7 +43,6 @@ export default function App() {
     return num.toLocaleString();
   };
 
-  // API 호출: 채널 검색
   const searchChannels = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -65,7 +63,6 @@ export default function App() {
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
-  // API 호출: 채널 클릭
   const handleChannelClick = async (channelId, channelTitle) => {
     setLoadingVideos(true); setError(null); setChannelVideos([]); setNextPageToken(null);
     try {
@@ -79,18 +76,14 @@ export default function App() {
     } catch (err) { setError(err.message); } finally { setLoadingVideos(false); }
   };
 
-  // API 호출: 영상 목록
   const fetchVideosFromPlaylist = async (playlistId, pageToken) => {
     try {
       let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${playlistId}&key=${apiKey}`;
       if (pageToken) url += `&pageToken=${pageToken}`;
-      
       const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message);
-      
       setNextPageToken(data.nextPageToken);
-
       const videoIds = data.items.map(item => item.snippet.resourceId.videoId).join(',');
       if (videoIds) {
         const statsRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds}&key=${apiKey}`);
@@ -112,7 +105,6 @@ export default function App() {
     }
   };
 
-  // 자막 다운로드 (Vercel Backend 사용)
   const downloadTranscript = async (videoTitle, videoId) => {
     if (downloadingId) return;
     setDownloadingId(videoId);
@@ -121,7 +113,6 @@ export default function App() {
       if (!response.ok) throw new Error('자막을 가져올 수 없습니다 (자동 자막 없음/제한됨)');
       const data = await response.json();
       if (data.error) throw new Error(data.error);
-
       const blob = new Blob([data.transcript], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -153,7 +144,6 @@ export default function App() {
           </button>
         </div>
       </header>
-
       {showSettings && (
         <div className="bg-gray-800 text-white p-4">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center gap-4">
@@ -164,10 +154,8 @@ export default function App() {
           </div>
         </div>
       )}
-
       <main className="max-w-7xl mx-auto p-4 space-y-6">
         {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-3 border border-red-100"><AlertCircle size={20} /><p className="text-sm font-medium">{error}</p></div>}
-        
         {viewMode === 'search' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {channels.map(item => (
@@ -181,7 +169,6 @@ export default function App() {
             {channels.length === 0 && !loading && <div className="col-span-full text-center py-20 text-gray-400"><User size={48} className="mx-auto mb-4 opacity-20"/><p>검색어를 입력하세요.</p></div>}
           </div>
         )}
-
         {viewMode === 'videos' && selectedChannel && (
           <div className="animate-in fade-in slide-in-from-right-4">
             <div className="flex items-center gap-4 mb-6 pb-4 border-b">
