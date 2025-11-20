@@ -15,16 +15,23 @@ export default function App() {
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
 
-  // [배포앱] 초기 로드 시 저장된 키 불러오기
+  // 1. 초기 로드 시 저장된 키 불러오기
   useEffect(() => {
-    const storedKey = localStorage.getItem('yt_api_key');
-    if (storedKey) setApiKey(storedKey);
-    else setShowSettings(true);
+    try {
+      const storedKey = localStorage.getItem('yt_api_key');
+      if (storedKey) setApiKey(storedKey);
+      else setShowSettings(true);
+    } catch (e) { console.error("Storage access error", e); }
   }, []);
 
-  // [배포앱] 키 저장 함수
-  const saveApiKey = () => {
-    localStorage.setItem('yt_api_key', apiKey);
+  // 2. 키 입력 시 자동 저장 (Auto-save)
+  useEffect(() => {
+    if (apiKey) {
+      try { localStorage.setItem('yt_api_key', apiKey); } catch (e) {}
+    }
+  }, [apiKey]);
+
+  const closeSettings = () => {
     setShowSettings(false);
     setError(null);
   };
@@ -110,9 +117,9 @@ export default function App() {
     setDownloadingId(videoId);
     try {
       const response = await fetch(`/api/transcript?videoId=${videoId}`);
-      if (!response.ok) throw new Error('자막을 가져올 수 없습니다 (자동 자막 없음/제한됨)');
       const data = await response.json();
-      if (data.error) throw new Error(data.error);
+      if (!response.ok) throw new Error(data.error || '자막을 가져올 수 없습니다.');
+
       const blob = new Blob([data.transcript], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -122,8 +129,9 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err) { alert(`다운로드 실패: ${err.message}`); }
-    finally { setDownloadingId(null); }
+    } catch (err) { 
+      alert(`[다운로드 실패]\n${err.message}`); 
+    } finally { setDownloadingId(null); }
   };
 
   return (
@@ -135,7 +143,7 @@ export default function App() {
             <span className="text-xl font-bold text-gray-900 hidden sm:block">Channel Explorer</span>
           </div>
           <form onSubmit={searchChannels} className="flex-1 max-w-xl flex gap-2">
-            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="채널 검색..." className="w-full pl-4 py-2 rounded-full border border-gray-300 focus:outline-none focus:border-red-500" />
+            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="채널 검색..." className="w-full pl-4 px-4 py-2 rounded-full border border-gray-300 focus:outline-none focus:border-red-500" />
             <button type="submit" className="bg-red-600 text-white px-4 py-2 rounded-full hover:bg-red-700"><Search size={20} /></button>
           </form>
           <button onClick={() => setShowSettings(!showSettings)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full relative">
@@ -149,7 +157,7 @@ export default function App() {
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center gap-4">
             <span className="text-sm font-bold">YouTube API Key:</span>
             <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="flex-1 p-2 rounded bg-gray-700 border border-gray-600 text-sm w-full" placeholder="AIzaSy..." />
-            <button onClick={saveApiKey} className="bg-red-600 px-4 py-2 rounded text-sm hover:bg-red-700">저장</button>
+            <button onClick={closeSettings} className="bg-red-600 px-4 py-2 rounded text-sm hover:bg-red-700">닫기 (자동저장됨)</button>
             <button onClick={() => setShowSettings(false)}><X size={20}/></button>
           </div>
         </div>
@@ -159,7 +167,7 @@ export default function App() {
         {viewMode === 'search' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {channels.map(item => (
-              <div key={item.id.channelId} onClick={() => handleChannelClick(item.id.channelId, decodeHtml(item.snippet.title))} className="bg-white p-6 rounded-xl shadow hover:shadow-md cursor-pointer border flex flex-col items-center text-center transition-transform hover:-translate-y-1">
+              <div key={item.id.channelId} onClick={() => handleChannelClick(item.id.channelId, decodeHtml(item.snippet.title))} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md cursor-pointer border flex flex-col items-center text-center transition-transform hover:-translate-y-1">
                 <img src={item.snippet.thumbnails.medium.url} className="w-24 h-24 rounded-full mb-4 ring-4 ring-gray-50" alt="" />
                 <h3 className="font-bold text-gray-900 mb-2 line-clamp-1">{decodeHtml(item.snippet.title)}</h3>
                 <p className="text-sm text-gray-500 line-clamp-2 mb-4">{item.snippet.description}</p>
@@ -185,10 +193,7 @@ export default function App() {
                   <div className="p-4 flex-1 flex flex-col">
                     <h3 className="font-medium line-clamp-2 mb-3 h-12 leading-snug" title={decodeHtml(video.snippet.title)}>{decodeHtml(video.snippet.title)}</h3>
                     <div className="mt-auto space-y-3">
-                      <div className="flex justify-between text-xs text-gray-500">
-                        <span className="flex items-center gap-1"><Eye size={12}/> {formatCount(video.statistics?.viewCount)}</span>
-                        <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(video.publishDate).toLocaleDateString()}</span>
-                      </div>
+                      <div className="flex justify-between text-xs text-gray-500"><span className="flex items-center gap-1"><Eye size={12}/> {formatCount(video.statistics?.viewCount)}</span><span className="flex items-center gap-1"><Calendar size={12}/> {new Date(video.publishDate).toLocaleDateString()}</span></div>
                       <button onClick={() => downloadTranscript(decodeHtml(video.snippet.title), video.snippet.resourceId.videoId)} disabled={downloadingId === video.snippet.resourceId.videoId} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded bg-gray-50 hover:bg-gray-100 border transition-colors">
                         {downloadingId === video.snippet.resourceId.videoId ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>} 자막 다운로드
                       </button>
@@ -197,13 +202,7 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {nextPageToken && (
-              <div className="text-center mt-8 pb-10">
-                <button onClick={loadMoreVideos} disabled={loadingVideos} className="px-6 py-2 bg-white border rounded-full shadow-sm hover:bg-gray-50 flex items-center gap-2 mx-auto">
-                  {loadingVideos && <Loader2 className="animate-spin" size={16}/>} 더 보기
-                </button>
-              </div>
-            )}
+            {nextPageToken && <div className="text-center mt-8"><button onClick={loadMoreVideos} disabled={loadingVideos} className="px-6 py-2 bg-white border rounded-full shadow-sm hover:bg-gray-50 flex items-center gap-2 mx-auto">{loadingVideos && <Loader2 className="animate-spin" size={16}/>} 더 보기</button></div>}
           </div>
         )}
         {loading && <div className="fixed inset-0 bg-white/50 z-50 flex items-center justify-center"><Loader2 className="animate-spin text-red-600" size={48}/></div>}
