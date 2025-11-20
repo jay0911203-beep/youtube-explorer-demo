@@ -15,26 +15,23 @@ export default function App() {
   const [loadingVideos, setLoadingVideos] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
 
-  // 1. 초기 로드 시 저장된 키 불러오기
+  // 1. 초기 로드: 저장된 키 불러오기
   useEffect(() => {
     try {
       const storedKey = localStorage.getItem('yt_api_key');
       if (storedKey) setApiKey(storedKey);
       else setShowSettings(true);
-    } catch (e) { console.error("Storage access error", e); }
+    } catch (e) {}
   }, []);
 
-  // 2. 키 입력 시 자동 저장 (Auto-save)
+  // 2. 키 입력 시 자동 저장
   useEffect(() => {
     if (apiKey) {
       try { localStorage.setItem('yt_api_key', apiKey); } catch (e) {}
     }
   }, [apiKey]);
 
-  const closeSettings = () => {
-    setShowSettings(false);
-    setError(null);
-  };
+  const closeSettings = () => { setShowSettings(false); setError(null); };
 
   const decodeHtml = (html) => {
     const txt = document.createElement("textarea");
@@ -53,17 +50,10 @@ export default function App() {
   const searchChannels = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
-    if (!apiKey) {
-      setError("API 키가 필요합니다. 우측 상단 설정에서 키를 입력해주세요.");
-      setShowSettings(true);
-      return;
-    }
+    if (!apiKey) { setError("API 키 필요"); setShowSettings(true); return; }
     setLoading(true); setError(null); setViewMode('search'); setChannels([]);
-
     try {
-      const response = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`
-      );
+      const response = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error?.message || '오류 발생');
       setChannels(data.items);
@@ -93,10 +83,10 @@ export default function App() {
       setNextPageToken(data.nextPageToken);
       const videoIds = data.items.map(item => item.snippet.resourceId.videoId).join(',');
       if (videoIds) {
-        const statsRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds}&key=${apiKey}`);
-        const statsData = await statsRes.json();
+        const sRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds}&key=${apiKey}`);
+        const sData = await sRes.json();
         const merged = data.items.map(item => {
-          const stat = statsData.items.find(v => v.id === item.snippet.resourceId.videoId);
+          const stat = sData.items.find(v => v.id === item.snippet.resourceId.videoId);
           return { ...item, statistics: stat ? stat.statistics : { viewCount: 0 }, publishDate: item.snippet.publishedAt };
         });
         setChannelVideos(prev => pageToken ? [...prev, ...merged] : merged);
@@ -118,8 +108,8 @@ export default function App() {
     try {
       const response = await fetch(`/api/transcript?videoId=${videoId}`);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '자막을 가져올 수 없습니다.');
-
+      if (!response.ok) throw new Error(data.error || '자막 없음');
+      
       const blob = new Blob([data.transcript], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -129,9 +119,8 @@ export default function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err) { 
-      alert(`[다운로드 실패]\n${err.message}`); 
-    } finally { setDownloadingId(null); }
+    } catch (err) { alert(`다운로드 실패: ${err.message}`); }
+    finally { setDownloadingId(null); }
   };
 
   return (
@@ -147,8 +136,7 @@ export default function App() {
             <button type="submit" className="bg-red-600 text-white px-4 py-2 rounded-full hover:bg-red-700"><Search size={20} /></button>
           </form>
           <button onClick={() => setShowSettings(!showSettings)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full relative">
-            <Settings size={24} />
-            {!apiKey && <span className="absolute top-1 right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse border-2 border-white"></span>}
+            <Settings size={24} />{!apiKey && <span className="absolute top-1 right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse border-2 border-white"></span>}
           </button>
         </div>
       </header>
@@ -157,8 +145,7 @@ export default function App() {
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center gap-4">
             <span className="text-sm font-bold">YouTube API Key:</span>
             <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="flex-1 p-2 rounded bg-gray-700 border border-gray-600 text-sm w-full" placeholder="AIzaSy..." />
-            <button onClick={closeSettings} className="bg-red-600 px-4 py-2 rounded text-sm hover:bg-red-700">닫기 (자동저장됨)</button>
-            <button onClick={() => setShowSettings(false)}><X size={20}/></button>
+            <button onClick={closeSettings} className="bg-yellow-600 text-white px-4 py-2 rounded text-sm">닫기 (자동저장)</button>
           </div>
         </div>
       )}
@@ -167,8 +154,8 @@ export default function App() {
         {viewMode === 'search' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {channels.map(item => (
-              <div key={item.id.channelId} onClick={() => handleChannelClick(item.id.channelId, decodeHtml(item.snippet.title))} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md cursor-pointer border flex flex-col items-center text-center transition-transform hover:-translate-y-1">
-                <img src={item.snippet.thumbnails.medium.url} className="w-24 h-24 rounded-full mb-4 ring-4 ring-gray-50" alt="" />
+              <div key={item.id.channelId} onClick={() => handleChannelClick(item.id.channelId, decodeHtml(item.snippet.title))} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md cursor-pointer border flex flex-col items-center text-center hover:-translate-y-1 transition-all">
+                <img src={item.snippet.thumbnails.medium.url} className="w-24 h-24 rounded-full mb-4 ring-4 ring-gray-50" alt=""/>
                 <h3 className="font-bold text-gray-900 mb-2 line-clamp-1">{decodeHtml(item.snippet.title)}</h3>
                 <p className="text-sm text-gray-500 line-clamp-2 mb-4">{item.snippet.description}</p>
                 <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-1 rounded-full">채널 보기</span>
@@ -179,7 +166,7 @@ export default function App() {
         )}
         {viewMode === 'videos' && selectedChannel && (
           <div className="animate-in fade-in slide-in-from-right-4">
-            <div className="flex items-center gap-4 mb-6 pb-4 border-b">
+            <div className="flex items-center gap-4 mb-8 pb-4 border-b">
               <button onClick={() => setViewMode('search')}><ChevronLeft size={24}/></button>
               <h2 className="text-2xl font-bold">{decodeHtml(selectedChannel.title)} <span className="text-sm font-normal text-gray-500">영상 목록</span></h2>
             </div>
@@ -187,16 +174,14 @@ export default function App() {
               {channelVideos.map(video => (
                 <div key={video.id} className="bg-white rounded-xl overflow-hidden shadow-sm border flex flex-col">
                   <a href={`https://www.youtube.com/watch?v=${video.snippet.resourceId.videoId}`} target="_blank" rel="noreferrer" className="relative aspect-video bg-gray-200 group">
-                    <img src={video.snippet.thumbnails.medium?.url} className="w-full h-full object-cover" alt="" />
+                    <img src={video.snippet.thumbnails.medium?.url} className="w-full h-full object-cover" alt=""/>
                     <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Play fill="white" className="text-white" size={40} /></div>
                   </a>
                   <div className="p-4 flex-1 flex flex-col">
                     <h3 className="font-medium line-clamp-2 mb-3 h-12 leading-snug" title={decodeHtml(video.snippet.title)}>{decodeHtml(video.snippet.title)}</h3>
                     <div className="mt-auto space-y-3">
                       <div className="flex justify-between text-xs text-gray-500"><span className="flex items-center gap-1"><Eye size={12}/> {formatCount(video.statistics?.viewCount)}</span><span className="flex items-center gap-1"><Calendar size={12}/> {new Date(video.publishDate).toLocaleDateString()}</span></div>
-                      <button onClick={() => downloadTranscript(decodeHtml(video.snippet.title), video.snippet.resourceId.videoId)} disabled={downloadingId === video.snippet.resourceId.videoId} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded bg-gray-50 hover:bg-gray-100 border transition-colors">
-                        {downloadingId === video.snippet.resourceId.videoId ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>} 자막 다운로드
-                      </button>
+                      <button onClick={() => downloadTranscript(decodeHtml(video.snippet.title), video.snippet.resourceId.videoId)} disabled={downloadingId === video.snippet.resourceId.videoId} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded bg-gray-50 hover:bg-gray-100 border transition-colors">{downloadingId === video.snippet.resourceId.videoId ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>} 자막 다운로드</button>
                     </div>
                   </div>
                 </div>
