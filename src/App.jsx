@@ -50,7 +50,7 @@ export default function App() {
   const searchChannels = async (e) => {
     e.preventDefault(); if(!query.trim()) return; setLoading(true); setViewMode('search');
     try {
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`);
+      const res = await fetch('https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=' + encodeURIComponent(query) + '&type=channel&key=' + apiKey);
       const data = await res.json(); setChannels(data.items||[]);
     } catch(e){} finally { setLoading(false); }
   };
@@ -58,12 +58,12 @@ export default function App() {
   const handleChannelClick = async (cid, ctitle) => {
     setLoading(true);
     try {
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${cid}&key=${apiKey}`);
+      const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=' + cid + '&key=' + apiKey);
       const data = await res.json();
       if(data.items?.[0]) {
         const uid = data.items[0].contentDetails.relatedPlaylists.uploads;
         setSelectedChannel({id:cid, title:ctitle, uploadsId:uid});
-        const vRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${uid}&key=${apiKey}`);
+        const vRes = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=' + uid + '&key=' + apiKey);
         const vData = await vRes.json();
         setNextPageToken(vData.nextPageToken);
         setChannelVideos(vData.items||[]);
@@ -75,7 +75,7 @@ export default function App() {
   const loadMore = async () => {
     if(!selectedChannel || !nextPageToken) return;
     try {
-      const res = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${selectedChannel.uploadsId}&pageToken=${nextPageToken}&key=${apiKey}`);
+      const res = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=' + selectedChannel.uploadsId + '&pageToken=' + nextPageToken + '&key=' + apiKey);
       const data = await res.json();
       setNextPageToken(data.nextPageToken);
       setChannelVideos(prev => [...prev, ...data.items]);
@@ -91,12 +91,12 @@ export default function App() {
 
     for (const [idx, node] of nodes.entries()) {
       try {
-        setTranscriptModal(p => ({...p, status: `노드 연결 (${idx+1}/${nodes.length}): ${new URL(node).hostname}`}));
+        setTranscriptModal(p => ({...p, status: '노드 연결 (' + (idx+1) + '/' + nodes.length + '): ' + new URL(node).hostname}));
         
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), 2500);
         
-        const res = await fetch(`${node}/streams/${videoId}`, { signal: controller.signal });
+        const res = await fetch(node + '/streams/' + videoId, { signal: controller.signal });
         clearTimeout(id);
 
         if (res.ok) {
@@ -113,7 +113,7 @@ export default function App() {
               let rawText = await subRes.text();
               const cleanText = rawText.replace(/WEBVTT/g,'').replace(/\d{2}:\d{2}.*?\n/g,'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g, ' ').replace(/\n+/g, ' ').trim();
               
-              setTranscriptModal(p => ({...p, loading: false, content: cleanText, status: `✅ 성공 (${new URL(node).hostname})`}));
+              setTranscriptModal(p => ({...p, loading: false, content: cleanText, status: '✅ 성공 (' + new URL(node).hostname + ')'}));
               success = true;
               break;
             }
@@ -127,12 +127,12 @@ export default function App() {
       try {
         setTranscriptModal(p => ({...p, status: '직접 파싱 시도...'}));
         const proxy = 'https://corsproxy.io/?';
-        const html = await (await fetch(`${proxy}https://www.youtube.com/watch?v=${videoId}`)).text();
+        const html = await (await fetch(proxy + 'https://www.youtube.com/watch?v=' + videoId)).text();
         const match = html.match(/"captionTracks":(\[.*?\])/);
         if (match) {
            const tracks = JSON.parse(match[1]);
            const track = tracks.find(t => t.languageCode === 'ko') || tracks[0];
-           const xml = await (await fetch(`${proxy}${encodeURIComponent(track.baseUrl)}`)).text();
+           const xml = await (await fetch(proxy + encodeURIComponent(track.baseUrl))).text();
            const text = xml.replace(/<text.*?>(.*?)<\/text>/g, '$1 ').replace(/<[^>]+>/g, '').trim();
            setTranscriptModal(p => ({...p, loading: false, content: text, status: '✅ 성공 (Direct)'}));
            success = true;
