@@ -1,5 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Play, Settings, X, Loader2, Youtube, AlertCircle, User, Calendar, Eye, FileText, ChevronLeft, Download, Copy, Github, RefreshCw, Globe } from 'lucide-react';
+import { Search, Play, Settings, X, Loader2, Youtube, AlertCircle, User, Calendar, Eye, FileText, ChevronLeft, Download, Copy, Globe, ShieldCheck } from 'lucide-react';
+
+// [핵심] 전 세계 분산 네트워크 (Swarm Network)
+const SWARM_NODES = [
+  "https://pipedapi.kavin.rocks",
+  "https://api.piped.otter.sh",
+  "https://piped-api.garudalinux.org",
+  "https://api.piped.privacy.com.de",
+  "https://pipedapi.tokhmi.xyz",
+  "https://pipedapi.moomoo.me",
+  "https://api.piped.projectsegfau.lt",
+  "https://pipedapi.adminforge.de",
+  "https://pipedapi.drgns.space",
+  "https://api.piped.yt.lo",
+  "https://piped-api.lunar.icu",
+  "https://pipedapi.system41.de",
+  "https://pipedapi.r4fo.com",
+  "https://api.piped.nocensor.rest"
+];
 
 export default function App() {
   const [apiKey, setApiKey] = useState('');
@@ -13,73 +31,37 @@ export default function App() {
   const [nextPageToken, setNextPageToken] = useState(null);
   
   const [transcriptModal, setTranscriptModal] = useState({ 
-    isOpen: false, videoId: null, title: '', content: '', loading: false, status: '' 
+    isOpen: false, videoId: null, title: '', content: '', loading: false, error: null, status: '' 
   });
-
-  // GitHub State
-  const [showGithubModal, setShowGithubModal] = useState(false);
-  const [ghToken, setGhToken] = useState('');
-  const [ghRepoName, setGhRepoName] = useState('');
-  const [ghUsername, setGhUsername] = useState('');
-  const [deployStatus, setDeployStatus] = useState({ type: 'idle', message: '' });
-  const [isConfigured, setIsConfigured] = useState(false);
-  const [syncModal, setSyncModal] = useState({ isOpen: false, step: 'idle', message: '' });
 
   useEffect(() => {
     try {
-      const k = localStorage.getItem('yt_api_key'); if(k) setApiKey(k); else setShowSettings(true);
-      const t = localStorage.getItem('gh_pat'), u = localStorage.getItem('gh_username'), r = localStorage.getItem('gh_repo_name');
-      if(t) setGhToken(t); if(u) setGhUsername(u); if(r) setGhRepoName(r);
-      if(t&&u&&r) setIsConfigured(true);
-    } catch(e){}
+      const k = localStorage.getItem('yt_api_key');
+      if(k) setApiKey(k); else setShowSettings(true);
+    } catch(e) {}
   }, []);
 
-  useEffect(() => { if(apiKey) try{localStorage.setItem('yt_api_key', apiKey)}catch(e){} }, [apiKey]);
-  useEffect(() => { if(ghToken) { localStorage.setItem('gh_pat', ghToken); localStorage.setItem('gh_username', ghUsername); localStorage.setItem('gh_repo_name', ghRepoName); if(ghToken&&ghUsername&&ghRepoName) setIsConfigured(true); } }, [ghToken, ghUsername, ghRepoName]);
-
-  // GitHub Logic
-  const uploadFileToGithub = async (path, content) => {
-    const url = `https://api.github.com/repos/${ghUsername}/${ghRepoName}/contents/${path}`;
-    let sha = null;
-    try { const c = await fetch(url, { headers: { 'Authorization': `token ${ghToken}` } }); if(c.ok) sha = (await c.json()).sha; } catch(e){}
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: `Update ${path}`, content: btoa(unescape(encodeURIComponent(content))), sha: sha || undefined })
-    });
-    if(!res.ok) throw new Error('Upload failed');
-  };
-
-  const handleDeploy = async (mode) => {
-    if(!ghToken) return; setDeployStatus({ type: 'loading', message: '작업 중...' });
-    try {
-      if(mode==='create') await fetch('https://api.github.com/user/repos', { method: 'POST', headers: { 'Authorization': `token ${ghToken}` }, body: JSON.stringify({ name: ghRepoName, private: false, auto_init: true }) });
-      setDeployStatus({ type: 'success', message: '완료!' });
-    } catch(e) { setDeployStatus({ type: 'error', message: e.message }); }
-  };
-
-  const handleQuickSync = async () => {
-    setSyncModal({isOpen:true, step:'processing', message:'업데이트 중...'});
-    try { setSyncModal({isOpen:true, step:'success', message:'성공!'}); } catch(e) { setSyncModal({isOpen:true, step:'error', message:e.message}); }
-  };
+  useEffect(() => {
+    if(apiKey) localStorage.setItem('yt_api_key', apiKey);
+  }, [apiKey]);
 
   const decodeHtml = (h) => { try { const t = document.createElement("textarea"); t.innerHTML = h; return t.value; } catch(e){return h;} };
 
-  // YouTube Logic
   const searchChannels = async (e) => {
     e.preventDefault(); if(!query.trim()) return; setLoading(true); setViewMode('search');
     try {
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`);
-      const d = await r.json(); setChannels(d.items||[]);
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`);
+      const data = await res.json(); setChannels(data.items||[]);
     } catch(e){} finally { setLoading(false); }
   };
+
   const handleChannelClick = async (cid, ctitle) => {
     setLoading(true);
     try {
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${cid}&key=${apiKey}`);
-      const d = await r.json();
-      if(d.items?.length) {
-        const uid = d.items[0].contentDetails.relatedPlaylists.uploads;
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${cid}&key=${apiKey}`);
+      const data = await res.json();
+      if(data.items?.[0]) {
+        const uid = data.items[0].contentDetails.relatedPlaylists.uploads;
         setSelectedChannel({id:cid, title:ctitle, uploadsId:uid});
         const vRes = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${uid}&key=${apiKey}`);
         const vData = await vRes.json();
@@ -89,6 +71,7 @@ export default function App() {
       }
     } catch(e){} finally { setLoading(false); }
   };
+
   const loadMore = async () => {
     if(!selectedChannel || !nextPageToken) return;
     try {
@@ -99,49 +82,109 @@ export default function App() {
     } catch(e){}
   };
 
-  // [핵심] 자막 요청 (Backend API 사용)
+  // [핵심] Client-Side Swarm Transcript Engine
   const getTranscript = async (title, videoId) => {
-    setTranscriptModal({ isOpen: true, videoId, title, content: '', loading: true, status: '서버에 요청 중...' });
-    try {
-      const res = await fetch(`/api/transcript?videoId=${videoId}`);
-      const data = await res.json();
-      
-      if(data.success) {
-        setTranscriptModal(p => ({...p, loading: false, content: data.content, status: `성공 (${data.source})`}));
-      } else {
-        throw new Error(data.error);
-      }
-    } catch (err) {
-      setTranscriptModal(p => ({...p, loading: false, content: '자막을 불러오지 못했습니다.', status: '실패'}));
+    setTranscriptModal({ isOpen: true, videoId, title, content: '', loading: true, error: null, status: '네트워크 스캔 중...' });
+    
+    const nodes = [...SWARM_NODES].sort(() => 0.5 - Math.random());
+    let success = false;
+
+    for (const [idx, node] of nodes.entries()) {
+      try {
+        setTranscriptModal(p => ({...p, status: `노드 연결 (${idx+1}/${nodes.length}): ${new URL(node).hostname}`}));
+        
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 2500);
+        
+        const res = await fetch(`${node}/streams/${videoId}`, { signal: controller.signal });
+        clearTimeout(id);
+
+        if (res.ok) {
+          const data = await res.json();
+          const subtitles = data.subtitles || [];
+          if (subtitles.length > 0) {
+            const track = subtitles.find(s => s.code === 'ko' && !s.autoGenerated) ||
+                          subtitles.find(s => s.code === 'en' && !s.autoGenerated) ||
+                          subtitles.find(s => s.code === 'ko') ||
+                          subtitles[0];
+            
+            const subRes = await fetch(track.url);
+            if (subRes.ok) {
+              let rawText = await subRes.text();
+              const cleanText = rawText.replace(/WEBVTT/g,'').replace(/\d{2}:\d{2}.*?\n/g,'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g, ' ').replace(/\n+/g, ' ').trim();
+              
+              setTranscriptModal(p => ({...p, loading: false, content: cleanText, status: `✅ 성공 (${new URL(node).hostname})`}));
+              success = true;
+              break;
+            }
+          }
+        }
+      } catch (e) { continue; }
+    }
+
+    if (!success) {
+      // 최후의 수단: Direct Parsing
+      try {
+        setTranscriptModal(p => ({...p, status: '직접 파싱 시도...'}));
+        const proxy = 'https://corsproxy.io/?';
+        const html = await (await fetch(`${proxy}https://www.youtube.com/watch?v=${videoId}`)).text();
+        const match = html.match(/"captionTracks":(\[.*?\])/);
+        if (match) {
+           const tracks = JSON.parse(match[1]);
+           const track = tracks.find(t => t.languageCode === 'ko') || tracks[0];
+           const xml = await (await fetch(`${proxy}${encodeURIComponent(track.baseUrl)}`)).text();
+           const text = xml.replace(/<text.*?>(.*?)<\/text>/g, '$1 ').replace(/<[^>]+>/g, '').trim();
+           setTranscriptModal(p => ({...p, loading: false, content: text, status: '✅ 성공 (Direct)'}));
+           success = true;
+        }
+      } catch(e) {}
+    }
+
+    if (!success) {
+      setTranscriptModal(p => ({...p, loading: false, error: '자막을 가져올 수 없습니다. (모든 경로 차단됨)', status: '실패'}));
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
       <header className="bg-white shadow-sm sticky top-0 z-20 h-16 flex items-center px-4 gap-4">
-        <div className="flex items-center gap-2 text-red-600 font-bold text-lg cursor-pointer" onClick={()=>window.location.reload()}><Youtube fill="currentColor"/> Explorer</div>
-        <div className="flex-1"/>
-        <div className="flex gap-2">
-           {isConfigured ? <button onClick={()=>setSyncModal({isOpen:true, step:'confirm', message:'최신 코드를 업데이트 하시겠습니까?'})} className="bg-green-600 text-white px-3 py-1.5 rounded flex gap-2 text-sm items-center"><RefreshCw size={16}/>Sync</button> : <button onClick={()=>setShowGithubModal(true)} className="bg-gray-800 text-white px-3 py-1.5 rounded flex gap-2 text-sm items-center"><Github size={16}/>Connect</button>}
-           <button onClick={()=>setShowSettings(!showSettings)} className="p-2 hover:bg-gray-100 rounded-full"><Settings size={24}/></button>
+        <div className="flex items-center gap-2 text-red-600 font-bold text-lg cursor-pointer" onClick={() => window.location.reload()}>
+          <Youtube fill="currentColor"/> Explorer
         </div>
+        <div className="flex-1"></div>
+        <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-100 rounded-full"><Settings size={24}/></button>
       </header>
-      {showSettings && <div className="bg-gray-800 p-4 text-white flex justify-center"><div className="flex gap-2 w-full max-w-2xl"><input className="text-black flex-1 p-2 rounded" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="YouTube API Key"/><button onClick={()=>setShowSettings(false)} className="bg-yellow-600 px-4 rounded">닫기</button></div></div>}
-      
+
+      {showSettings && (
+        <div className="bg-gray-800 p-4 text-white flex justify-center"><div className="flex gap-2 w-full max-w-2xl"><input className="text-black flex-1 p-2 rounded" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="YouTube API Key"/><button onClick={()=>setShowSettings(false)} className="bg-yellow-600 px-4 rounded">닫기</button></div></div>
+      )}
+
       {transcriptModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl h-[70vh] flex flex-col">
-            <div className="p-4 border-b flex justify-between"><h3 className="font-bold truncate">{transcriptModal.title}</h3><button onClick={()=>setTranscriptModal(p=>({...p, isOpen:false}))}><X/></button></div>
-            <div className="flex-1 p-4 overflow-auto relative">
-              {transcriptModal.loading ? <div className="absolute inset-0 flex flex-col items-center justify-center bg-white"><Loader2 className="animate-spin text-red-600 mb-2" size={32}/><p className="text-sm text-gray-500">{transcriptModal.status}</p></div> : <p className="text-sm leading-relaxed whitespace-pre-wrap">{transcriptModal.content}</p>}
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="font-bold truncate pr-4">{transcriptModal.title}</h3>
+              <button onClick={()=>setTranscriptModal(p=>({...p, isOpen:false}))}><X/></button>
             </div>
-            <div className="p-4 border-t text-right"><button onClick={() => navigator.clipboard.writeText(transcriptModal.content)} className="px-4 py-2 bg-gray-900 text-white rounded text-sm">복사하기</button></div>
+            <div className="flex-1 p-4 overflow-auto relative">
+              {transcriptModal.loading ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white">
+                  <Loader2 className="animate-spin text-red-600 mb-2" size={32}/>
+                  <p className="text-sm text-gray-500">{transcriptModal.status}</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{transcriptModal.content}</p>
+                  {transcriptModal.status && <div className="text-xs text-right text-green-600 mt-4 flex justify-end items-center gap-1"><ShieldCheck size={12}/> {transcriptModal.status}</div>}
+                </>
+              )}
+            </div>
+            <div className="p-4 border-t text-right">
+              <button onClick={() => navigator.clipboard.writeText(transcriptModal.content)} className="px-4 py-2 bg-gray-900 text-white rounded text-sm flex items-center gap-2 ml-auto"><Copy size={14}/> 복사하기</button>
+            </div>
           </div>
         </div>
       )}
-
-      {syncModal.isOpen && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"><div className="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full text-center"><h3 className="font-bold text-lg mb-4">{syncModal.step==='confirm'?'GitHub 동기화':'상태'}</h3><p className="mb-6 text-gray-600">{syncModal.message}</p>{syncModal.step==='confirm' ? <div className="flex gap-2"><button onClick={()=>setSyncModal({isOpen:false})} className="flex-1 border py-2 rounded">취소</button><button onClick={handleQuickSync} className="flex-1 bg-blue-600 text-white py-2 rounded">확인</button></div> : <button onClick={()=>setSyncModal({isOpen:false})} className="w-full bg-gray-900 text-white py-2 rounded">닫기</button>}</div></div>}
-      {showGithubModal && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md"><h3 className="font-bold mb-4">GitHub 연결</h3><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={ghUsername} onChange={e=>setGhUsername(e.target.value)}/><input className="w-full border p-2 mb-2 rounded" placeholder="Repository" value={ghRepoName} onChange={e=>setGhRepoName(e.target.value)}/><input type="password" className="w-full border p-2 mb-4 rounded" placeholder="Token" value={ghToken} onChange={e=>setGhToken(e.target.value)}/><div className="flex gap-2"><button onClick={()=>handleDeploy('create')} className="flex-1 bg-gray-900 text-white py-2 rounded">생성</button><button onClick={()=>handleDeploy('update')} className="flex-1 border py-2 rounded">업데이트</button></div><button onClick={()=>setShowGithubModal(false)} className="mt-4 w-full text-gray-500 text-xs">닫기</button></div></div>}
 
       <main className="max-w-7xl mx-auto p-4">
         {!apiKey && <div className="text-center py-10 text-gray-500">설정에서 API 키를 입력해주세요.</div>}
@@ -150,7 +193,7 @@ export default function App() {
             <form onSubmit={searchChannels} className="flex gap-2 max-w-lg mx-auto mb-8"><input value={query} onChange={e=>setQuery(e.target.value)} className="flex-1 p-3 rounded-full border shadow-sm" placeholder="채널 검색"/><button className="bg-red-600 text-white px-6 rounded-full">검색</button></form>
             {loading && <div className="flex justify-center py-10"><Loader2 className="animate-spin text-red-600" size={40}/></div>}
             {viewMode === 'search' && !loading && <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{channels.map(c => (<div key={c.id.channelId} onClick={()=>handleChannelClick(c.id.channelId, decodeHtml(c.snippet.title))} className="bg-white p-4 rounded-xl shadow cursor-pointer hover:shadow-lg text-center"><img src={c.snippet.thumbnails.medium.url} className="w-20 h-20 rounded-full mx-auto mb-2"/><h3 className="font-bold line-clamp-1">{decodeHtml(c.snippet.title)}</h3></div>))}</div>}
-            {viewMode === 'videos' && !loading && <div><button onClick={()=>setViewMode('search')} className="mb-4 flex items-center gap-1 text-sm font-bold"><ChevronLeft size={16}/> 뒤로가기</button><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{channelVideos.map(v => (<div key={v.id} className="bg-white rounded-xl shadow overflow-hidden"><div className="aspect-video bg-gray-200 relative"><img src={v.snippet.thumbnails.medium?.url} className="w-full h-full object-cover"/><div className="absolute inset-0 flex items-center justify-center bg-black/10 opacity-0 hover:opacity-100 transition-opacity"><Play className="text-white" fill="white"/></div></div><div className="p-3"><h3 className="font-bold text-sm line-clamp-2 mb-3 h-10">{decodeHtml(v.snippet.title)}</h3><button onClick={()=>getTranscript(decodeHtml(v.snippet.title), v.snippet.resourceId.videoId)} className="w-full py-2 bg-blue-50 text-blue-600 rounded text-xs font-bold hover:bg-blue-100">자막 추출</button></div></div>))}</div>{nextPageToken && <div className="text-center mt-6"><button onClick={loadMore} className="px-6 py-2 bg-white border rounded-full text-sm">더 보기</button></div>}</div>}
+            {viewMode === 'videos' && !loading && <div><button onClick={()=>setViewMode('search')} className="mb-4 flex items-center gap-1 text-sm font-bold"><ChevronLeft size={16}/> 뒤로가기</button><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">{channelVideos.map(v => (<div key={v.id} className="bg-white rounded-xl shadow overflow-hidden"><div className="aspect-video bg-gray-200 relative"><img src={v.snippet.thumbnails.medium?.url} className="w-full h-full object-cover"/><div className="absolute inset-0 flex items-center justify-center bg-black/10 opacity-0 hover:opacity-100 transition-opacity"><Play className="text-white" fill="white"/></div></div><div className="p-3"><h3 className="font-bold text-sm line-clamp-2 mb-3 h-10">{decodeHtml(v.snippet.title)}</h3><button onClick={()=>getTranscript(decodeHtml(v.snippet.title), v.snippet.resourceId.videoId)} className="w-full py-2 bg-blue-50 text-blue-600 rounded text-xs font-bold hover:bg-blue-100 flex items-center justify-center gap-1"><Globe size={12}/> 자막 추출</button></div></div>))}</div>{nextPageToken && <div className="text-center mt-6"><button onClick={loadMore} className="px-6 py-2 bg-white border rounded-full text-sm">더 보기</button></div>}</div>}
           </>
         )}
       </main>
