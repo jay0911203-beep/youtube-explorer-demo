@@ -27,14 +27,15 @@ export default function App() {
   const [deployStatus, setDeployStatus] = useState({ type: 'idle', message: '' });
   const [isConfigured, setIsConfigured] = useState(false);
   
-  // [NEW] 동기화(Sync) 모달 상태
-  const [syncModal, setSyncModal] = useState({ isOpen: false, step: 'idle', message: '' }); // step: confirm, processing, success, error
+  // 동기화(Sync) 모달 상태
+  const [syncModal, setSyncModal] = useState({ isOpen: false, step: 'idle', message: '' });
 
   // --- 초기화 ---
   useEffect(() => {
     try {
       const storedKey = localStorage.getItem('yt_api_key');
       if (storedKey) setApiKey(storedKey);
+      else setShowSettings(true);
       
       const storedGhToken = localStorage.getItem('gh_pat');
       const storedGhUser = localStorage.getItem('gh_username');
@@ -69,26 +70,199 @@ export default function App() {
     if (!res.ok) throw new Error(`Failed to upload ${path}`);
   };
 
-  // 빠른 동기화 실행 (Confirm 후 호출됨)
-  const executeSync = async () => {
-    setSyncModal({ isOpen: true, step: 'processing', message: 'GitHub에 연결 중...' });
+  // --- Utility ---
+  const decodeHtml = (html) => { const txt = document.createElement("textarea"); txt.innerHTML = html; return txt.value; };
+  const formatCount = (count) => { const num = parseInt(count||0, 10); return num >= 1000000 ? (num/1000000).toFixed(1)+'M' : num >= 1000 ? (num/1000).toFixed(1)+'K' : num.toLocaleString(); };
+  const formatDate = (iso) => new Date(iso).toLocaleDateString('ko-KR', {year:'numeric', month:'long', day:'numeric'});
+
+  // --- YouTube Logic ---
+  const searchChannels = async (e) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    if (!apiKey) { setError("API 키 필요"); setShowSettings(true); return; }
+    setLoading(true); setError(null); setViewMode('search'); setChannels([]);
     try {
-      // 이 코드는 자기 자신을 업로드하는 것이므로, 실제로는 FILE_TEMPLATES가 정의되어 있어야 합니다.
-      // 배포된 코드에서는 FILE_TEMPLATES를 참조하기 어렵기 때문에, 
-      // 실제 구현시에는 이 부분에 대한 재귀적 참조 처리가 필요합니다.
-      // 여기서는 단순 데모용으로 성공 메시지만 보여줍니다.
-      await new Promise(r => setTimeout(r, 1500)); // 가짜 지연
-      setSyncModal({ isOpen: true, step: 'success', message: '성공! (실제 배포환경에서는 파일 템플릿이 필요합니다)' });
-    } catch (err) {
-      setSyncModal({ isOpen: true, step: 'error', message: err.message });
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=12&q=${encodeURIComponent(query)}&type=channel&key=${apiKey}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message);
+      setChannels(data.items);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  };
+
+  const handleChannelClick = async (channelId, channelTitle) => {
+    setLoadingVideos(true); setError(null); setChannelVideos([]); setNextPageToken(null);
+    try {
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${channelId}&key=${apiKey}`);
+      const data = await res.json();
+      if (!data.items?.length) throw new Error("정보 없음");
+      const uploadsId = data.items[0].contentDetails.relatedPlaylists.uploads;
+      setSelectedChannel({ id: channelId, title: channelTitle, uploadsId });
+      await fetchVideosFromPlaylist(uploadsId, null);
+      setViewMode('videos');
+    } catch (err) { setError(err.message); } finally { setLoadingVideos(false); }
+  };
+
+  const fetchVideosFromPlaylist = async (playlistId, pageToken) => {
+    try {
+      let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${playlistId}&key=${apiKey}`;
+      if (pageToken) url += `&pageToken=${pageToken}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setNextPageToken(data.nextPageToken);
+      const videoIds = data.items.map(item => item.snippet.resourceId.videoId).join(',');
+      if (videoIds) {
+        const sRes = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoIds}&key=${apiKey}`);
+        const sData = await sRes.json();
+        const merged = data.items.map(item => {
+          const stat = sData.items.find(v => v.id === item.snippet.resourceId.videoId);
+          return { ...item, statistics: stat ? stat.statistics : { viewCount: 0 }, publishDate: item.snippet.publishedAt };
+        });
+        setChannelVideos(prev => pageToken ? [...prev, ...merged] : merged);
+      }
+    } catch (err) { setError(err.message); }
+  };
+
+  const loadMoreVideos = async () => {
+    if (selectedChannel && nextPageToken) {
+      setLoadingVideos(true);
+      await fetchVideosFromPlaylist(selectedChannel.uploadsId, nextPageToken);
+      setLoadingVideos(false);
     }
   };
 
-  // --- Main Rendering (Simplified) ---
+  // 자막 (Piped Fallback for deployed app to avoid strict IP blocks if API fails)
+  const fetchPipedTranscript = async (videoId) => {
+    const PIPED_API = 'https://pipedapi.kavin.rocks';
+    const res = await fetch(`${PIPED_API}/streams/${videoId}`);
+    if (!res.ok) throw new Error('Piped API Error');
+    const data = await res.json();
+    const subtitles = data.subtitles || [];
+    if (subtitles.length === 0) throw new Error('No subtitles found');
+    let track = subtitles.find(s => s.code === 'ko' && !s.autoGenerated) || subtitles.find(s => s.code === 'en') || subtitles[0];
+    const subRes = await fetch(track.url);
+    return await subRes.text();
+  };
+
+  const openTranscriptModal = async (videoTitle, videoId) => {
+    setTranscriptModal({ isOpen: true, videoId, title: videoTitle, content: '', loading: true, error: null });
+    try {
+      // 1. Try Vercel API
+      try {
+        const response = await fetch(`/api/transcript?videoId=${videoId}`);
+        if (response.ok) {
+           const data = await response.json();
+           if (data.transcript) {
+             setTranscriptModal(prev => ({ ...prev, content: data.transcript, loading: false }));
+             return;
+           }
+        }
+      } catch(e) {}
+
+      // 2. Try Piped Fallback
+      const text = await fetchPipedTranscript(videoId);
+      // Simple cleaning
+      const cleanText = text.split('\n').filter(l => !l.includes('-->') && l.trim()).join(' ');
+      setTranscriptModal(prev => ({ ...prev, content: cleanText, loading: false }));
+
+    } catch (err) {
+      setTranscriptModal(prev => ({ ...prev, loading: false, error: err.message, content: "자막을 가져올 수 없습니다." }));
+    }
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(transcriptModal.content).then(() => {
+      setCopySuccess(true); setTimeout(() => setCopySuccess(false), 2000);
+    });
+  };
+
+  const saveAsTxt = () => {
+    const blob = new Blob([transcriptModal.content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${transcriptModal.title}_transcript.txt`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  // Main Rendering
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-       {/* 헤더 및 기본 UI 생략 (위 코드와 동일) */}
-       <h1 className="text-2xl font-bold text-center mt-10">배포된 앱입니다.</h1>
+    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans">
+      <header className="bg-white shadow-sm sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2 text-red-600 cursor-pointer shrink-0" onClick={() => { setViewMode('search'); setQuery(''); }}>
+            <Youtube size={32} fill="currentColor" />
+            <span className="text-xl font-bold text-gray-900 hidden sm:block">Channel Explorer</span>
+          </div>
+          <form onSubmit={searchChannels} className="flex-1 max-w-xl flex gap-2">
+            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="채널 검색..." className="w-full pl-4 px-4 py-2 rounded-full border border-gray-300 focus:border-red-500 focus:outline-none" />
+            <button type="submit" className="bg-red-600 text-white px-4 py-2 rounded-full hover:bg-red-700"><Search size={20} /></button>
+          </form>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowSettings(!showSettings)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full relative">
+              <Settings size={24} />{!apiKey && <span className="absolute top-1 right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse border-2 border-white"></span>}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {showSettings && (
+        <div className="bg-gray-800 text-white p-4">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center gap-4">
+            <span className="text-sm font-bold">YouTube API Key:</span>
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="flex-1 p-2 rounded bg-gray-700 border border-gray-600 text-sm w-full" />
+            <button onClick={() => setShowSettings(false)} className="bg-yellow-600 text-white px-4 py-2 rounded text-sm">닫기</button>
+          </div>
+        </div>
+      )}
+
+      {transcriptModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center"><h3 className="font-bold truncate pr-4">{transcriptModal.title}</h3><button onClick={() => setTranscriptModal(prev => ({...prev, isOpen: false}))}><X size={24}/></button></div>
+            <div className="flex-1 p-4 overflow-hidden relative">
+              {transcriptModal.loading ? <div className="absolute inset-0 flex items-center justify-center bg-white"><Loader2 className="animate-spin text-red-600" size={40}/></div> : <textarea className="w-full h-full resize-none border rounded p-4 text-sm focus:outline-none" value={transcriptModal.content} readOnly />}
+            </div>
+            <div className="p-4 border-t bg-gray-50 flex gap-3 justify-end"><button onClick={copyToClipboard} className="px-4 py-2 bg-white border rounded text-sm">복사</button><button onClick={saveAsTxt} className="px-4 py-2 bg-gray-900 text-white rounded text-sm">저장</button></div>
+          </div>
+        </div>
+      )}
+
+      <main className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
+        {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-3 border border-red-100"><AlertCircle size={20} /><p className="text-sm font-medium">{error}</p></div>}
+        {viewMode === 'search' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {channels.map(item => (
+              <div key={item.id.channelId} onClick={() => handleChannelClick(item.id.channelId, decodeHtml(item.snippet.title))} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md cursor-pointer border border-gray-100 flex flex-col items-center text-center hover:-translate-y-1 transition-all">
+                <img src={item.snippet.thumbnails.medium.url} className="w-24 h-24 rounded-full mb-4 ring-4 ring-gray-50" alt=""/>
+                <h3 className="font-bold text-gray-900 mb-2 line-clamp-1">{decodeHtml(item.snippet.title)}</h3>
+                <span className="text-xs font-medium text-red-600 bg-red-50 px-3 py-1 rounded-full">채널 보기</span>
+              </div>
+            ))}
+            {channels.length === 0 && !loading && <div className="col-span-full text-center py-20 text-gray-400"><User size={48} className="mx-auto mb-4 opacity-20"/><p>검색어를 입력하세요.</p></div>}
+          </div>
+        )}
+        {viewMode === 'videos' && selectedChannel && (
+          <div className="animate-in fade-in slide-in-from-right-4">
+            <div className="flex items-center gap-4 mb-8 pb-4 border-b">
+              <button onClick={() => setViewMode('search')}><ChevronLeft size={24}/></button>
+              <h2 className="text-2xl font-bold">{decodeHtml(selectedChannel.title)}</h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {channelVideos.map(video => (
+                <div key={video.id} className="bg-white rounded-xl overflow-hidden shadow-sm border flex flex-col">
+                  <div className="relative aspect-video bg-gray-200"><img src={video.snippet.thumbnails.medium?.url} className="w-full h-full object-cover" alt=""/></div>
+                  <div className="p-4 flex-1 flex flex-col">
+                    <h3 className="font-medium line-clamp-2 mb-3 h-12 leading-snug">{decodeHtml(video.snippet.title)}</h3>
+                    <div className="mt-auto space-y-3">
+                      <div className="flex justify-between text-xs text-gray-500"><span><Eye size={12} className="inline mr-1"/>{formatCount(video.statistics?.viewCount)}</span><span><Calendar size={12} className="inline mr-1"/>{formatDate(video.publishDate)}</span></div>
+                      <button onClick={() => openTranscriptModal(decodeHtml(video.snippet.title), video.snippet.resourceId.videoId)} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium rounded bg-gray-50 hover:bg-gray-100 border transition-colors"><FileText size={14} /> 자막 보기</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {nextPageToken && <div className="text-center mt-8"><button onClick={loadMoreVideos} disabled={loadingVideos} className="px-6 py-2 bg-white border rounded-full shadow-sm hover:bg-gray-50 flex items-center gap-2 mx-auto">{loadingVideos && <Loader2 className="animate-spin" size={16}/>} 더 보기</button></div>}
+          </div>
+        )}
+        {loading && <div className="fixed inset-0 bg-white/50 z-50 flex items-center justify-center"><Loader2 className="animate-spin text-red-600" size={48}/></div>}
+      </main>
     </div>
   );
 }
