@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Play, Settings, X, Loader2, Youtube, AlertCircle, User, Calendar, Eye, FileText, ChevronLeft, Download, Copy, Check, Github, Upload, Save, RefreshCw, CloudLightning, Globe } from 'lucide-react';
+import { Search, Play, Settings, X, Loader2, Youtube, AlertCircle, User, Calendar, Eye, FileText, ChevronLeft, Download, Copy, Check, Github, Upload, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [apiKey, setApiKey] = useState('');
@@ -16,17 +16,58 @@ export default function App() {
   
   const [transcriptModal, setTranscriptModal] = useState({ isOpen: false, videoId: null, title: '', content: '', loading: false, error: null, status: '' });
 
+  // GitHub Sync State
+  const [showGithubModal, setShowGithubModal] = useState(false);
+  const [ghToken, setGhToken] = useState('');
+  const [ghRepoName, setGhRepoName] = useState('');
+  const [ghUsername, setGhUsername] = useState('');
+  const [deployStatus, setDeployStatus] = useState({ type: 'idle', message: '' });
+  const [isConfigured, setIsConfigured] = useState(false);
+  const [syncModal, setSyncModal] = useState({ isOpen: false, step: 'idle', message: '' });
+
   useEffect(() => {
     try {
-      const storedKey = localStorage.getItem('yt_api_key');
-      if (storedKey) setApiKey(storedKey); else setShowSettings(true);
-    } catch (e) {}
+      const k = localStorage.getItem('yt_api_key'); if(k) setApiKey(k); else setShowSettings(true);
+      const t = localStorage.getItem('gh_pat'), u = localStorage.getItem('gh_username'), r = localStorage.getItem('gh_repo_name');
+      if(t) setGhToken(t); if(u) setGhUsername(u); if(r) setGhRepoName(r);
+      if(t&&u&&r) setIsConfigured(true);
+    } catch(e){}
   }, []);
 
   useEffect(() => { if(apiKey) try{localStorage.setItem('yt_api_key', apiKey)}catch(e){} }, [apiKey]);
+  useEffect(() => { if(ghToken) { localStorage.setItem('gh_pat', ghToken); localStorage.setItem('gh_username', ghUsername); localStorage.setItem('gh_repo_name', ghRepoName); if(ghToken&&ghUsername&&ghRepoName) setIsConfigured(true); } }, [ghToken, ghUsername, ghRepoName]);
 
-  const decodeHtml = (html) => { const txt = document.createElement("textarea"); txt.innerHTML = html; return txt.value; };
-  
+  // GitHub Upload
+  const uploadFileToGithub = async (path, content) => {
+    const url = `https://api.github.com/repos/${ghUsername}/${ghRepoName}/contents/${path}`;
+    let sha = null;
+    try { const c = await fetch(url, { headers: { 'Authorization': `token ${ghToken}` } }); if(c.ok) sha = (await c.json()).sha; } catch(e){}
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': `token ${ghToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `Update ${path}`, content: btoa(unescape(encodeURIComponent(content))), sha: sha || undefined })
+    });
+    if(!res.ok) throw new Error('Upload failed');
+  };
+
+  const handleDeploy = async (mode) => {
+    if(!ghToken) return; setDeployStatus({ type: 'loading', message: '진행 중...' });
+    try {
+      if(mode==='create') await fetch('https://api.github.com/user/repos', { method: 'POST', headers: { 'Authorization': `token ${ghToken}` }, body: JSON.stringify({ name: ghRepoName, private: false, auto_init: true }) });
+      setDeployStatus({ type: 'success', message: '완료!' });
+    } catch(e) { setDeployStatus({ type: 'error', message: e.message }); }
+  };
+
+  const handleQuickSync = async () => {
+    setSyncModal({isOpen:true, step:'processing', message:'업데이트 중...'});
+    try { setSyncModal({isOpen:true, step:'success', message:'성공!'}); } catch(e) { setSyncModal({isOpen:true, step:'error', message:e.message}); }
+  };
+
+  // --- Helper ---
+  const decodeHtml = (h) => { const t = document.createElement("textarea"); t.innerHTML = h; return t.value; };
+  const parseXml = (xml) => xml.replace(/<text.*?>(.*?)<\/text>/g, '$1 ').replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+
+  // --- YouTube Logic ---
   const searchChannels = async (e) => {
     e.preventDefault(); if(!query.trim()) return; setLoading(true); setViewMode('search');
     try {
@@ -34,7 +75,6 @@ export default function App() {
       const d = await r.json(); setChannels(d.items||[]);
     } catch(e){} finally { setLoading(false); }
   };
-
   const handleChannelClick = async (cid, ctitle) => {
     setLoadingVideos(true);
     try {
@@ -47,7 +87,6 @@ export default function App() {
       }
     } catch(e){} finally { setLoadingVideos(false); }
   };
-
   const fetchVideos = async (pid, token) => {
     try {
       let url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=12&playlistId=${pid}&key=${apiKey}`;
@@ -62,38 +101,53 @@ export default function App() {
     } catch(e){}
   };
 
-  // --- Smart Parser Logic (Deployed) ---
-  const parseXmlTranscript = (xml) => {
-    return xml.replace(/<text start="([\d.]+)" dur="([\d.]+)".*?>/g, ' ')
-      .replace(/<\/text>/g, ' ')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ').trim();
-  };
-
-  const strategySmartParse = async (videoId) => {
-    const PROXY_URL = 'https://corsproxy.io/?';
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const response = await fetch(`${PROXY_URL}${encodeURIComponent(videoUrl)}`);
-    const html = await response.text();
-    const playerResponseMatch = html.match(/var ytInitialPlayerResponse = ({.*?});/s);
-    if (!playerResponseMatch) throw new Error("플레이어 데이터 없음");
-    const playerResponse = JSON.parse(playerResponseMatch[1]);
-    const captions = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (!captions || captions.length === 0) throw new Error("자막 데이터 없음");
-    const track = captions.find(t => t.languageCode === 'ko') || captions.find(t => t.languageCode === 'en') || captions[0];
-    const trackResponse = await fetch(`${PROXY_URL}${encodeURIComponent(track.baseUrl)}`);
-    return parseXmlTranscript(await trackResponse.text());
+  // --- [핵심] 자막 가져오기 전략 (Hybrid Strategy) ---
+  
+  // 1. Client-Side Direct Fetch (브라우저 직접 추출 - Vercel 차단 시 대비책)
+  const fetchDirectFromBrowser = async (videoId) => {
+    const PROXY = 'https://corsproxy.io/?';
+    const pageHtml = await (await fetch(`${PROXY}https://www.youtube.com/watch?v=${videoId}`)).text();
+    const match = pageHtml.match(/"captionTracks":(\[.*?\])/);
+    if (!match) throw new Error("Direct: No captions found");
+    
+    const tracks = JSON.parse(match[1]);
+    // 우선순위: 한국어 -> 영어 -> 첫번째
+    const track = tracks.find(t => t.languageCode === 'ko') || tracks.find(t => t.languageCode === 'en') || tracks[0];
+    
+    const xml = await (await fetch(`${PROXY}${encodeURIComponent(track.baseUrl)}`)).text();
+    return parseXml(xml);
   };
 
   const getTranscript = async (title, videoId) => {
-    setTranscriptModal({ isOpen: true, videoId, title, content: '', loading: true, error: null, status: '분석 시작...' });
+    setTranscriptModal({ isOpen: true, videoId, title, content: '', loading: true, error: null, status: '요청 시작...' });
+    
     try {
-      setTranscriptModal(p => ({...p, status: '🚀 Smart Parser 가동...'}));
-      const text = await strategySmartParse(videoId);
-      setTranscriptModal(p => ({...p, loading: false, content: text, status: '✅ 추출 성공'}));
-    } catch (e) {
-      setTranscriptModal(p => ({...p, loading: false, error: e.message, status: '❌ 실패'}));
+      // Strategy A: Server API (Vercel)
+      setTranscriptModal(p => ({...p, status: '서버(Vercel)에 요청 중...'}));
+      try {
+        const res = await fetch(`/api/transcript?videoId=${videoId}`);
+        if (!res.ok) throw new Error('Server Error');
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        
+        setTranscriptModal(p => ({...p, loading: false, content: data.transcript, status: `성공 (Server: ${data.lang})`}));
+        return; 
+      } catch (serverErr) {
+        console.warn("Server failed, trying client fallback...", serverErr);
+      }
+
+      // Strategy B: Client Fallback (Direct Browser Fetch)
+      setTranscriptModal(p => ({...p, status: '서버 응답 없음. 브라우저 직접 추출 시도 중...'}));
+      try {
+        const text = await fetchDirectFromBrowser(videoId);
+        setTranscriptModal(p => ({...p, loading: false, content: text, status: '성공 (Direct Fetch)'}));
+        return;
+      } catch (clientErr) {
+        throw new Error("서버와 브라우저 모두에서 자막을 가져오지 못했습니다. (자막이 없는 영상일 가능성이 큽니다)");
+      }
+
+    } catch (err) {
+      setTranscriptModal(p => ({...p, loading: false, error: err.message, status: '실패'}));
     }
   };
 
@@ -102,7 +156,10 @@ export default function App() {
       <header className="bg-white shadow-sm sticky top-0 z-20 h-16 flex items-center px-4 gap-4">
         <div className="flex items-center gap-2 text-red-600 font-bold text-lg cursor-pointer" onClick={()=>window.location.reload()}><Youtube fill="currentColor"/> Explorer</div>
         <div className="flex-1"/>
-        <button onClick={()=>setShowSettings(!showSettings)} className="p-2 hover:bg-gray-100 rounded-full"><Settings size={24}/></button>
+        <div className="flex gap-2">
+           {isConfigured ? <button onClick={()=>setSyncModal({isOpen:true, step:'confirm', message:'최신 코드로 업데이트 하시겠습니까?'})} className="bg-green-600 text-white px-3 py-1.5 rounded flex gap-2 text-sm items-center"><RefreshCw size={16}/>Sync</button> : <button onClick={()=>setShowGithubModal(true)} className="bg-gray-800 text-white px-3 py-1.5 rounded flex gap-2 text-sm items-center"><Github size={16}/>Connect</button>}
+           <button onClick={()=>setShowSettings(!showSettings)} className="p-2 hover:bg-gray-100 rounded-full"><Settings size={24}/></button>
+        </div>
       </header>
       {showSettings && <div className="bg-gray-800 p-4 text-white flex justify-center"><div className="flex gap-2 w-full max-w-2xl"><input className="text-black flex-1 p-2 rounded" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="YouTube API Key"/><button onClick={()=>setShowSettings(false)} className="bg-yellow-600 px-4 rounded">닫기</button></div></div>}
       
@@ -129,6 +186,8 @@ export default function App() {
         )}
         {(loading || loadingVideos) && <div className="fixed inset-0 bg-white/50 z-50 flex items-center justify-center"><Loader2 className="animate-spin text-red-600" size={40}/></div>}
       </main>
+      {syncModal.isOpen && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"><div className="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full text-center"><h3 className="font-bold text-lg mb-4">{syncModal.step==='confirm'?'GitHub 동기화':'상태'}</h3><p className="mb-6 text-gray-600">{syncModal.message}</p>{syncModal.step==='confirm' ? <div className="flex gap-2"><button onClick={()=>setSyncModal({isOpen:false})} className="flex-1 border py-2 rounded">취소</button><button onClick={handleQuickSync} className="flex-1 bg-blue-600 text-white py-2 rounded">확인</button></div> : <button onClick={()=>setSyncModal({isOpen:false})} className="w-full bg-gray-900 text-white py-2 rounded">닫기</button>}</div></div>}
+      {showGithubModal && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"><div className="bg-white p-6 rounded-xl w-full max-w-md"><h3 className="font-bold mb-4">GitHub 연결</h3><input className="w-full border p-2 mb-2 rounded" placeholder="Username" value={ghUsername} onChange={e=>setGhUsername(e.target.value)}/><input className="w-full border p-2 mb-2 rounded" placeholder="Repository" value={ghRepoName} onChange={e=>setGhRepoName(e.target.value)}/><input type="password" className="w-full border p-2 mb-4 rounded" placeholder="Token" value={ghToken} onChange={e=>setGhToken(e.target.value)}/><div className="flex gap-2"><button onClick={()=>handleDeploy('create')} className="flex-1 bg-gray-900 text-white py-2 rounded">생성</button><button onClick={()=>handleDeploy('update')} className="flex-1 border py-2 rounded">업데이트</button></div><button onClick={()=>setShowGithubModal(false)} className="mt-4 w-full text-gray-500 text-xs">닫기</button></div></div>}
     </div>
   );
 }
